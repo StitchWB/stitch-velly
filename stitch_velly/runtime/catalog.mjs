@@ -10,6 +10,11 @@ export const verifiedModels = new Set([
   'moonshotai/kimi-k3',
 ]);
 
+// velly.one отдаёт platform-gated модели (например kimi-k3.1-pro) только с ?platform=win32 — как официальный клиент
+export function catalogPath(platform) {
+  return platform === 'win32' ? '/models?platform=win32' : '/models';
+}
+
 export function normalizeCatalog(raw) {
   if (!Array.isArray(raw?.models)) throw new Error('Invalid Velly catalog: expected models array');
   const seen = new Set();

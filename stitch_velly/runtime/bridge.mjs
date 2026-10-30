@@ -4,7 +4,7 @@ import { readFile, writeFile, rename, copyFile, unlink, mkdir } from 'node:fs/pr
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { ModelHealth } from './health.mjs';
-import { normalizeCatalog, buildProvider, defaultChains } from './catalog.mjs';
+import { catalogPath, normalizeCatalog, buildProvider, defaultChains } from './catalog.mjs';
 import { authDiagnostic, errorPreview } from './auth-diagnostics.mjs';
 
 const identity = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
@@ -86,6 +86,7 @@ export async function startBridge({
   tokenReader,
   fetchImpl = fetch,
   upstream = 'https://velly.one',
+  platform = process.platform,
   port = 0,
   refreshMs = 600000,
   chains = defaultChains,
@@ -177,7 +178,7 @@ export async function startBridge({
     if (refreshing) return refreshing;
     refreshing = (async () => {
       try {
-        const response = await authorizedFetch(`${upstream}/models`, {
+        const response = await authorizedFetch(`${upstream}${catalogPath(platform)}`, {
           signal: AbortSignal.timeout(15000),
         });
         if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`);
@@ -376,7 +377,7 @@ export async function startBridge({
           let catalogStatus = null;
           if (response.status === 401) {
             try {
-              const check = await authorizedFetch(`${upstream}/models`, {
+              const check = await authorizedFetch(`${upstream}${catalogPath(platform)}`, {
                 signal: AbortSignal.timeout(5000),
               });
               catalogStatus = check.status;

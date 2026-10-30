@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCipheriv, randomBytes } from 'node:crypto';
 import { startBridge, syncOpenCodeKey, updateOpenCode } from '../stitch_velly/runtime/bridge.mjs';
-import { normalizeCatalog, buildProvider } from '../stitch_velly/runtime/catalog.mjs';
+import { catalogPath, normalizeCatalog, buildProvider } from '../stitch_velly/runtime/catalog.mjs';
 import { ModelHealth } from '../stitch_velly/runtime/health.mjs';
 import { createTokenReader } from '../stitch_velly/runtime/token.mjs';
 
@@ -196,6 +196,26 @@ test('model 401 with accepted catalog token does not demand sign-in or replay ge
   assert.equal(response.headers.get('x-velly-auth-source'), 'model_route');
   assert.equal((await response.json()).error.source, 'model_route');
   assert.deepEqual(paths, ['/v1/messages', '/models']);
+});
+
+test('catalog requests carry the platform gate the official client uses', async t => {
+  assert.equal(catalogPath('win32'), '/models?platform=win32');
+  assert.equal(catalogPath('linux'), '/models');
+  const urls = [];
+  const bridge = await bridgeFor(t, {
+    platform: 'win32',
+    fetchImpl: async url => {
+      urls.push(url);
+      return Response.json(raw);
+    },
+  });
+  const origin = new URL(bridge.baseURL).origin;
+  const response = await fetch(origin + '/control/refresh', {
+    method: 'POST',
+    headers: { authorization: 'Bearer local-test-key' },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(urls, ['https://velly.one/models?platform=win32']);
 });
 
 test('provider OAuth error preserves HTTP status but explains the upstream session failure', async t => {
