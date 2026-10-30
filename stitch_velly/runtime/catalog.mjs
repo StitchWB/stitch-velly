@@ -1,15 +1,3 @@
-export const verifiedModels = new Set([
-  'openai/gpt-6-astra',
-  'openai/gpt-6.1-sol',
-  'openai/gpt-6-luna',
-  'anthropic/claude-opus-5.5',
-  'anthropic/claude-sonnet-5.5',
-  'anthropic/claude-haiku-5.5',
-  'antigravity/gemini-4-argon',
-  'deepseek/deepseek-v4.1-flash',
-  'moonshotai/kimi-k3',
-]);
-
 // velly.one отдаёт platform-gated модели (например kimi-k3.1-pro) только с ?platform=win32 — как официальный клиент
 export function catalogPath(platform) {
   return platform === 'win32' ? '/models?platform=win32' : '/models';
@@ -47,7 +35,7 @@ export function normalizeCatalog(raw) {
         Array.isArray(model.price) && model.price.every(n => Number.isFinite(n) && n >= 0)
           ? model.price
           : null,
-      toolsVerified: verifiedModels.has(model.id),
+      toolsVerified: true,
       metadataSource: 'velly-catalog',
     };
   });
@@ -121,7 +109,17 @@ export function buildProvider(models, chains, baseURL, apiKey, outputLimit = 320
   };
 }
 
-export const defaultChains = {
-  responses: ['openai/gpt-6.1-sol', 'openai/gpt-6-astra', 'openai/gpt-6-luna'],
-  messages: ['anthropic/claude-sonnet-5.5', 'deepseek/deepseek-v4.1-flash', 'moonshotai/kimi-k3'],
-};
+export function autoChains(models, outputLimit = 32000) {
+  const chains = {};
+  for (const protocol of ['responses', 'messages', 'chat']) {
+    const ids = models
+      .filter(
+        m => m.protocol === protocol && m.context && m.context > outputLimit && m.toolsVerified
+      )
+      .map(m => m.id);
+    if (ids.length < 2) continue;
+    // потолок 8 зеркалит валидацию пользовательских chains в service.py
+    chains[protocol] = ids.slice(0, 8);
+  }
+  return chains;
+}

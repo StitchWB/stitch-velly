@@ -4,7 +4,7 @@ import { readFile, writeFile, rename, copyFile, unlink, mkdir } from 'node:fs/pr
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { ModelHealth } from './health.mjs';
-import { catalogPath, normalizeCatalog, buildProvider, defaultChains } from './catalog.mjs';
+import { catalogPath, normalizeCatalog, buildProvider, autoChains } from './catalog.mjs';
 import { authDiagnostic, errorPreview } from './auth-diagnostics.mjs';
 
 const identity = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
@@ -89,7 +89,7 @@ export async function startBridge({
   platform = process.platform,
   port = 0,
   refreshMs = 600000,
-  chains = defaultChains,
+  chains = null,
   userAgent = 'claude-cli/2.1.308 (external, sdk-cli)',
   outputLimit = 32000,
   maxInFlight = 4,
@@ -138,7 +138,8 @@ export async function startBridge({
       ...m,
       toolsVerified: m.toolsVerified || health.get(m.id).toolsVerified === true,
     }));
-  const provider = () => buildProvider(effectiveModels(), chains, baseURL, apiKey, outputLimit);
+  const activeChains = () => chains ?? autoChains(effectiveModels(), outputLimit);
+  const provider = () => buildProvider(effectiveModels(), activeChains(), baseURL, apiKey, outputLimit);
   const status = () => ({
     running: true,
     baseURL,
@@ -150,7 +151,7 @@ export async function startBridge({
       ...health.get(m.id),
       historicallyVerified: m.toolsVerified,
     })),
-    chains,
+    chains: activeChains(),
     lastSelection: selections.at(-1) || null,
   });
   async function authorizedFetch(url, options) {
@@ -202,7 +203,7 @@ export async function startBridge({
   }
   function candidates(name, protocol, body) {
     const automatic = name.startsWith('auto/');
-    const ids = automatic ? chains[name.slice(5)] || [] : [name];
+    const ids = automatic ? activeChains()[name.slice(5)] || [] : [name];
     const result = ids
       .map(id => effectiveModels().find(m => m.id === id))
       .filter(m => m?.protocol === protocol);
@@ -257,7 +258,7 @@ export async function startBridge({
             .map(([id, card]) => ({
               id,
               context: card.limit.context,
-              protocol: models.find(m => chains[id.slice(5)].includes(m.id))?.protocol,
+              protocol: models.find(m => activeChains()[id.slice(5)]?.includes(m.id))?.protocol,
             })),
         ].filter(m => !scope || m.protocol === scope);
         json(200, {
@@ -416,7 +417,7 @@ export async function startBridge({
           'x-velly-requested-model': body.model,
         };
         const reason = automatic
-          ? selected.id === chains[body.model.slice(5)][0]
+          ? selected.id === activeChains()[body.model.slice(5)]?.[0]
             ? 'primary'
             : 'primary_unavailable'
           : 'explicit';

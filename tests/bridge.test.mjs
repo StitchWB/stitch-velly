@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCipheriv, randomBytes } from 'node:crypto';
 import { startBridge, syncOpenCodeKey, updateOpenCode } from '../stitch_velly/runtime/bridge.mjs';
-import { catalogPath, normalizeCatalog, buildProvider } from '../stitch_velly/runtime/catalog.mjs';
+import { catalogPath, normalizeCatalog, buildProvider, modelCard, autoChains } from '../stitch_velly/runtime/catalog.mjs';
 import { ModelHealth } from '../stitch_velly/runtime/health.mjs';
 import { createTokenReader } from '../stitch_velly/runtime/token.mjs';
 
@@ -377,9 +377,47 @@ test('cards use reported context, conservative auto capabilities and explicit cl
   assert.equal(provider.models['auto/coding'].limit.context, 1000000);
   assert.equal(provider.models['auto/coding'].attachment, false);
   assert.equal(provider.models['auto/coding'].limit.output, 32000);
-  assert.equal(provider.models[models[4].id].tool_call, false);
+  assert.equal(provider.models[models[4].id].tool_call, true);
   assert.equal(provider.models[models[0].id].provider.npm, '@ai-sdk/openai');
   assert.throws(() => normalizeCatalog({ models: [{ id: 'x' }, { id: 'x' }] }), /duplicate/);
+});
+
+test('catalog treats every upstream model as tools-capable', () => {
+  const [model] = normalizeCatalog({
+    models: [{ id: 'moonshotai/kimi-k3.1-pro', agent: 'claude', context: 1048576 }],
+  });
+  assert.equal(model.toolsVerified, true);
+  assert.equal(modelCard(model).tool_call, true);
+});
+
+test('autoChains groups eligible models per protocol and skips singletons and small contexts', () => {
+  const catalog = normalizeCatalog({
+    models: [
+      { id: 'a/r1', agent: 'codex', context: 200000 },
+      { id: 'b/m1', agent: 'claude', context: 200000 },
+      { id: 'c/r2', agent: 'codex', context: 200000 },
+      { id: 'd/small', agent: 'codex', context: 32000 },
+      { id: 'e/chat1', agent: 'opencode', context: 200000 },
+    ],
+  });
+  assert.deepEqual(autoChains(catalog), { responses: ['a/r1', 'c/r2'] });
+});
+
+test('autoChains keeps catalog order, fixed protocol order and caps chains at eight members', () => {
+  const catalog = normalizeCatalog({
+    models: [
+      ...Array.from({ length: 10 }, (_, i) => ({ id: `v/r${i}`, agent: 'codex', context: 200000 })),
+      { id: 'w/m0', agent: 'claude', context: 200000 },
+      { id: 'w/m1', agent: 'claude', context: 200000 },
+    ],
+  });
+  const chains = autoChains(catalog);
+  assert.deepEqual(Object.keys(chains), ['responses', 'messages']);
+  assert.deepEqual(
+    chains.responses,
+    ['v/r0', 'v/r1', 'v/r2', 'v/r3', 'v/r4', 'v/r5', 'v/r6', 'v/r7']
+  );
+  assert.deepEqual(chains.messages, ['w/m0', 'w/m1']);
 });
 
 test('export preserves other providers and options, backs up and removes only legacy bridge hook', async t => {
@@ -456,38 +494,20 @@ test('token reader decrypts AES-GCM, observes rotation and can bypass cached sta
   assert.equal(await reader(true), 'second-test-token-longer');
 });
 
-test('verified models skip manual probe; new model tool call writes only plugin-owned marker', async t => {
+test('every catalog model skips manual probe without sending generation', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'velly-probe-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   let calls = 0;
   const bridge = await bridgeFor(t, {
     dataDir: directory,
-    fetchImpl: async (url, options) => {
+    fetchImpl: async () => {
       calls++;
-      const body = JSON.parse(options.body);
-      const marker = body.tools[0].function.parameters.properties.marker.enum[0];
-      return Response.json({
-        choices: [
-          {
-            message: {
-              tool_calls: [
-                { function: { name: 'write_marker', arguments: JSON.stringify({ marker }) } },
-              ],
-            },
-          },
-        ],
-      });
+      return Response.json({});
     },
   });
   assert.equal((await bridge.probe(models[0].id)).skipped, true);
+  assert.equal((await bridge.probe(models[4].id)).skipped, true);
   assert.equal(calls, 0);
-  const result = await bridge.probe(models[4].id);
-  assert.equal(result.verified, true);
-  assert.equal(calls, 1);
-  assert.equal(await readFile(result.file, 'utf8'), result.file.split(/[\\/]/).at(-1).slice(0, -4));
-  assert.equal(bridge.provider().models[models[4].id].tool_call, true);
-  const state = JSON.parse(await readFile(join(directory, 'health.json'), 'utf8'));
-  assert.equal(JSON.stringify(state).includes('test-token'), false);
 });
 
 test('automatic server-side continuation is rejected before upstream calls', async t => {
@@ -509,4 +529,37 @@ test('automatic server-side continuation is rejected before upstream calls', asy
     400
   );
   assert.equal(calls, 0);
+});
+
+test('bridge without explicit chains builds auto chains from the fetched catalog', async t => {
+  const bridge = await startBridge({
+    apiKey: 'local-test-key',
+    tokenReader: async () => 'test-token',
+    refreshMs: 0,
+    fetchImpl: async () => Response.json(raw),
+  });
+  t.after(() => bridge.close());
+  await bridge.refresh();
+  const expected = {
+    responses: [models[0].id, models[1].id],
+    messages: [models[2].id, models[3].id],
+  };
+  assert.deepEqual(bridge.status().chains, expected);
+  assert.ok(bridge.provider().models['auto/responses']);
+  assert.ok(bridge.provider().models['auto/messages']);
+  assert.equal(bridge.provider().models['auto/chat'], undefined);
+});
+
+test('explicit chains override the dynamically built catalog chains', async t => {
+  const bridge = await startBridge({
+    apiKey: 'local-test-key',
+    tokenReader: async () => 'test-token',
+    initialModels: models,
+    refreshMs: 0,
+    chains: { coding: [models[0].id, models[1].id] },
+  });
+  t.after(() => bridge.close());
+  assert.deepEqual(bridge.status().chains, { coding: [models[0].id, models[1].id] });
+  assert.ok(bridge.provider().models['auto/coding']);
+  assert.equal(bridge.provider().models['auto/responses'], undefined);
 });
