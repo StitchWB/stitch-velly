@@ -18,6 +18,8 @@ _process: subprocess.Popen | None = None
 _lock = threading.RLock()
 _action: dict[str, Any] | None = None
 _startup_error: str | None = None
+_autorestart_at = 0.0
+_AUTORESTART_INTERVAL = 60.0
 
 
 def configure(data_dir: str) -> None:
@@ -408,10 +410,29 @@ def export_secrets(params: dict) -> dict:
     return {"path": data["path"], "fields": data["fields"]}
 
 
+def _autorestart() -> None:
+    global _autorestart_at, _startup_error
+    if not _read("lifecycle.json").get("enabled"):
+        return
+    if time.monotonic() - _autorestart_at < _AUTORESTART_INTERVAL:
+        return
+    _autorestart_at = time.monotonic()
+    try:
+        start()
+        _startup_error = None
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        _startup_error = f"Bridge auto-restart failed: {exc}"
+        # провалившийся start() может погасить lifecycle через stop(); намерение юзера — включено
+        _write("lifecycle.json", {"enabled": True})
+
+
 def gateway_provider() -> dict:
     state = status()
     if not state["running"]:
-        return {"running": False, "provider": {}, "runtime": []}
+        _autorestart()
+        state = status()
+        if not state["running"]:
+            return {"running": False, "provider": {}, "runtime": []}
     provider = _control("/control/provider")
     groups: dict[str, dict] = {}
     for model_id, model in provider["models"].items():
