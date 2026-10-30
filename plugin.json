@@ -1,0 +1,173 @@
+{
+  "schema": "stitch.plugin/v2",
+  "id": "stitch-velly",
+  "name": "Velly Bridge",
+  "version": "0.1.0",
+  "service": "stitch-velly",
+  "kind": "service",
+  "engine": {
+    "min": "0.3.0",
+    "api": 2
+  },
+  "depends": [],
+  "entry": {
+    "module": "stitch_velly"
+  },
+  "capabilities": [],
+  "outputs": [],
+  "signature": "",
+  "description": {
+    "ru": "Локальный API-мост Velly: актуальный токен, каталог, состояние моделей и OpenCode.",
+    "en": "Local Velly API bridge with live credentials, model catalog, health and OpenCode export."
+  },
+  "category": "ai-tools",
+  "status": "beta",
+  "icon": "🧩",
+  "features": [
+    {
+      "title": "Velly Bridge commands",
+      "status": "beta"
+    }
+  ],
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "date": "2026-10-24",
+      "changes": [
+        "Initial release"
+      ]
+    }
+  ],
+  "generated_by": {
+    "tool": "stitch_plugin_tools",
+    "scaffold": 3
+  },
+  "contributions": {
+    "commands": [
+      {
+        "name": "health_check",
+        "readonly": true
+      },
+      {
+        "name": "start_bridge",
+        "readonly": false
+      },
+      {
+        "name": "stop_bridge",
+        "readonly": false
+      },
+      {
+        "name": "get_status",
+        "readonly": true
+      },
+      {
+        "name": "refresh_catalog",
+        "readonly": false
+      },
+      {
+        "name": "action_status",
+        "readonly": true
+      },
+      {
+        "name": "export_opencode",
+        "readonly": false
+      },
+      {
+        "name": "export_gateway_config",
+        "readonly": false
+      },
+      {
+        "name": "probe_model",
+        "readonly": false
+      },
+      {
+        "name": "get_summary",
+        "readonly": true
+      },
+      {
+        "name": "get_gateway_provider",
+        "readonly": false
+      },
+      {
+        "name": "get_model_view",
+        "readonly": true
+      },
+      {
+        "name": "get_connection",
+        "readonly": true
+      },
+      {
+        "name": "export_secrets",
+        "readonly": false
+      }
+    ],
+    "ui": {
+      "kind": "core_page",
+      "tabs": [
+        {
+          "id": "stitch-velly",
+          "label": "stitch-velly.tab",
+          "icon": "Plug"
+        }
+      ]
+    },
+    "i18n": {
+      "ru": {
+        "stitch-velly": {
+          "title": "Velly",
+          "tab": "Velly",
+          "profile": "Профиль Velly (пусто — текущий пользователь)",
+          "node": "Путь node.exe (необязательно)",
+          "start": "Запустить мост",
+          "stop": "Остановить",
+          "refresh": "Обновить",
+          "export": "Подключить OpenCode",
+          "gateway": "Экспорт настроек для AI Gateway",
+          "path": "Путь к существующему opencode.json",
+          "id": "Модель",
+          "context": "Контекст",
+          "status": "Последний результат",
+          "empty": "Мост остановлен или каталог ещё не получен",
+          "confirm": "Обновить только provider.velly? Будет создана резервная копия.",
+          "probe": "Проверить инструмент",
+          "probe_confirm": "Один запрос к модели потратит квоту. Уже проверенные модели пропускаются.",
+          "probe_model_id": "ID модели для ручной проверки",
+          "verified_models": "Проверенные модели",
+          "other_models": "Остальные модели",
+          "connection_settings": "Настройки подключения",
+          "manual_test": "Проверка модели"
+        }
+      },
+      "en": {
+        "stitch-velly": {
+          "title": "Velly",
+          "tab": "Velly",
+          "profile": "Velly profile (empty: current OS user)",
+          "node": "Node executable (optional)",
+          "start": "Start bridge",
+          "stop": "Stop",
+          "refresh": "Refresh",
+          "export": "Configure OpenCode",
+          "gateway": "Export AI Gateway configuration",
+          "path": "Existing opencode.json path",
+          "id": "Model",
+          "context": "Context",
+          "status": "Last result",
+          "empty": "Bridge stopped or catalog not loaded",
+          "confirm": "Update provider.velly only? A backup will be created.",
+          "probe": "Test tool call",
+          "probe_confirm": "One generation consumes quota. Previously verified models are skipped.",
+          "probe_model_id": "Model ID for manual tool test",
+          "verified_models": "Previously verified models",
+          "other_models": "Other catalog models",
+          "connection_settings": "Connection settings",
+          "manual_test": "Manual test (uses quota)"
+        }
+      }
+    },
+    "storage": {
+      "sqlite": false
+    }
+  },
+  "author": "StitchWB"
+}

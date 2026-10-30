@@ -1,0 +1,1 @@
+"""Velly Bridge service plugin."""
