@@ -10,6 +10,49 @@ import { authDiagnostic, errorPreview } from './auth-diagnostics.mjs';
 const identity = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
 const paths = { messages: '/messages', responses: '/responses', chat: '/chat/completions' };
 
+const TOOL_REWRITE_OUT = { task: 'task_probe' };
+const TOOL_REWRITE_IN_RE = /"name"\s*:\s*"task_probe"/g;
+const TOOL_REWRITE_IN_TO = '"name":"task"';
+
+function rewriteToolsOut(payload) {
+  let changed = false;
+  if (Array.isArray(payload.tools))
+    for (const tool of payload.tools) {
+      if (tool.name in TOOL_REWRITE_OUT) { tool.name = TOOL_REWRITE_OUT[tool.name]; changed = true; }
+      if (tool.function?.name in TOOL_REWRITE_OUT) {
+        tool.function.name = TOOL_REWRITE_OUT[tool.function.name];
+        changed = true;
+      }
+    }
+  if (payload.tool_choice) {
+    const tc = payload.tool_choice;
+    if (tc.name in TOOL_REWRITE_OUT) { tc.name = TOOL_REWRITE_OUT[tc.name]; changed = true; }
+    if (tc.function?.name in TOOL_REWRITE_OUT) {
+      tc.function.name = TOOL_REWRITE_OUT[tc.function.name];
+      changed = true;
+    }
+    if (Array.isArray(tc.tools))
+      for (const allowed of tc.tools)
+        if (allowed.name in TOOL_REWRITE_OUT) {
+          allowed.name = TOOL_REWRITE_OUT[allowed.name];
+          changed = true;
+        }
+  }
+  const history = payload.input ?? payload.messages;
+  if (Array.isArray(history))
+    for (const msg of history) {
+      if (msg.name in TOOL_REWRITE_OUT) { msg.name = TOOL_REWRITE_OUT[msg.name]; changed = true; }
+      for (const block of msg.content ?? [])
+        if (block.name in TOOL_REWRITE_OUT) { block.name = TOOL_REWRITE_OUT[block.name]; changed = true; }
+      for (const tc of msg.tool_calls ?? [])
+        if (tc.function?.name in TOOL_REWRITE_OUT) {
+          tc.function.name = TOOL_REWRITE_OUT[tc.function.name];
+          changed = true;
+        }
+    }
+  return changed;
+}
+
 export function adaptMessages(body) {
   const system =
     typeof body.system === 'string' ? [{ type: 'text', text: body.system }] : body.system || [];
@@ -352,6 +395,7 @@ export async function startBridge({
           }
         }
         if (protocol === 'responses') payload.store = false;
+        const toolsRewritten = rewriteToolsOut(payload);
         for (const name of [
           'anthropic-beta',
           'x-velly-task',
@@ -435,12 +479,25 @@ export async function startBridge({
         res.writeHead(response.status, outgoing);
         let eventBuffer = '';
         let streamFailed = false;
+        let sseBuf = '';
         for await (const chunk of response.body || []) {
-          eventBuffer = (eventBuffer + Buffer.from(chunk).toString('utf8')).slice(-32768);
+          const text = Buffer.from(chunk).toString('utf8');
+          eventBuffer = (eventBuffer + text).slice(-32768);
           if (/event:\s*error|"type"\s*:\s*"(?:error|response\.failed)"/.test(eventBuffer))
             streamFailed = true;
-          if (!res.write(chunk)) await once(res, 'drain', { signal: controller.signal });
+          if (toolsRewritten) {
+            sseBuf += text;
+            let sep;
+            while ((sep = sseBuf.indexOf('\n\n')) !== -1) {
+              const event = sseBuf.slice(0, sep + 2);
+              sseBuf = sseBuf.slice(sep + 2);
+              const out = event.replace(TOOL_REWRITE_IN_RE, TOOL_REWRITE_IN_TO);
+              if (!res.write(out)) await once(res, 'drain', { signal: controller.signal });
+            }
+          } else if (!res.write(chunk)) await once(res, 'drain', { signal: controller.signal });
         }
+        if (sseBuf && !res.write(sseBuf))
+          await once(res, 'drain', { signal: controller.signal });
         if (response.ok)
           health.record(
             selected.id,

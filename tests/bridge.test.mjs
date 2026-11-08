@@ -563,3 +563,68 @@ test('explicit chains override the dynamically built catalog chains', async t =>
   assert.ok(bridge.provider().models['auto/coding']);
   assert.equal(bridge.provider().models['auto/responses'], undefined);
 });
+
+test('task tool is renamed upstream and restored in the SSE response', async t => {
+  const requests = [];
+  const bridge = await bridgeFor(t, {
+    fetchImpl: async (url, options) => {
+      requests.push(JSON.parse(options.body));
+      const sse = [
+        'data: {"type":"response.output_item.added","item":{"type":"function_call","name":"task_probe","arguments":"","call_id":"call_1"}}',
+        '',
+        'data: {"type":"response.completed","response":{"output":[{"type":"function_call","name":"task_probe","arguments":"{}","call_id":"call_1"}]}}',
+        '',
+        '',
+      ].join('\n');
+      return new Response(sse, { headers: { 'content-type': 'text/event-stream' } });
+    },
+  });
+  const request = {
+    model: models[0].id,
+    input: [
+      { role: 'user', content: 'delegate' },
+      { type: 'function_call', name: 'task', call_id: 'call_0', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call_0', output: 'ok' },
+    ],
+    tools: [{ type: 'function', name: 'task', parameters: { type: 'object' } }],
+    tool_choice: { type: 'allowed_tools', tools: [{ type: 'function', name: 'task' }] },
+  };
+  const response = await call(bridge, '/responses', request);
+  assert.equal(response.status, 200);
+  const upstream = requests[0];
+  assert.equal(upstream.tools[0].name, 'task_probe');
+  assert.equal(upstream.input[1].name, 'task_probe');
+  assert.equal(upstream.tool_choice.tools[0].name, 'task_probe');
+  const raw = await response.text();
+  assert.ok(!raw.includes('"name":"task_probe"'), 'upstream alias leaked to the client');
+  assert.ok(raw.includes('"name":"task"'), 'client tool name was not restored');
+});
+
+test('Messages-format task history and tool_choice are renamed upstream', async t => {
+  let captured;
+  const bridge = await bridgeFor(t, {
+    fetchImpl: async (url, options) => {
+      captured = JSON.parse(options.body);
+      return Response.json({ content: [{ type: 'text', text: 'OK' }] });
+    },
+  });
+  const request = {
+    model: models[2].id,
+    max_tokens: 4000,
+    messages: [
+      { role: 'user', content: 'delegate' },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't1', name: 'task', input: {} }],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'data' }] },
+    ],
+    tools: [{ name: 'task', input_schema: { type: 'object' } }],
+    tool_choice: { type: 'tool', name: 'task' },
+  };
+  const response = await call(bridge, '/messages', request);
+  assert.equal(response.status, 200);
+  assert.equal(captured.tools[0].name, 'task_probe');
+  assert.equal(captured.tool_choice.name, 'task_probe');
+  assert.equal(captured.messages[1].content[0].name, 'task_probe');
+});
